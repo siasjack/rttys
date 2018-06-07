@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+message rtty_message {
+	enum Type {
+		UNKNOWN = 0;
+		LOGIN = 1;
+	    LOGINACK = 2;
+	    LOGOUT = 3;
+	    TTY = 4;
+	    UPFILE = 5;
+	    DOWNFILE = 6;
+	    COMMAND = 7;
+	}
+
+	enum Code {
+		OK = 0;
+		OFFLINE = 1;
+		RATELIMIT = 2;
+		FILEDATA = 3;
+		CANCELED = 4;
+		END = 5;
+		PERMISSION = 6;
+		NOTFOUND = 7;
+		SYSERR = 8;
+	}
+
+	uint32 version = 1;
+	Type type = 2;
+	string sid = 3;
+
+	Code code = 4;
+	bytes data = 5;
+	string name = 6;
+	uint32 size = 7;
+	uint32 id = 8;
+	string username = 9;
+	string password = 10;
+	string stdout = 11;
+	string stderr = 12;
+	repeated string params = 13;
+	map<string, string> env = 14;
+}

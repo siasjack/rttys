@@ -21,10 +21,12 @@ package main
 
 import (
     "time"
+    "sync"
     "net/http"
     "io/ioutil"
     "encoding/json"
     "github.com/gorilla/websocket"
+    "github.com/zhaojh329/rttys/rtty"
 )
 
 const (
@@ -45,7 +47,7 @@ type CommandReq struct {
     Devid string `json:"devid"`
     Cmd string `json:"cmd"`
     Params []string `json:"params"`
-    Env []string `json:"env"`
+    Env map[string]string `json:"env"`
 }
 
 type CommandResult struct {
@@ -68,7 +70,11 @@ var errStr = map[int]string {
     COMMAND_ERR_DEVOFFLINE: "device offline",
 }
 
-func serveCmd(br *Bridge, w http.ResponseWriter, r *http.Request) {
+var commandID uint32 = 0
+var cmdMutex sync.Mutex
+var command = make(map[uint32]chan *rtty.RttyMessage)
+
+func serveCmd(br *Broker, w http.ResponseWriter, r *http.Request) {
     ticker := time.NewTicker(time.Second * 5)
     defer func() {
         ticker.Stop()
@@ -87,33 +93,43 @@ func serveCmd(br *Bridge, w http.ResponseWriter, r *http.Request) {
     } else if dev, ok := br.devices[req.Devid]; !ok {
         err = COMMAND_ERR_DEVOFFLINE
     } else {
-        dev.mutex.Lock()
-        req.ID = dev.cmdid
-        dev.cmd[req.ID] = make(chan *wsMessage)
-        dev.cmdid = dev.cmdid + 1
-        if dev.cmdid == 1024 {
-            dev.cmdid = 0
+        cmdMutex.Lock()
+        id := commandID
+        command[id] = make(chan *rtty.RttyMessage)
+        commandID = commandID + 1
+        if commandID == 1024 {
+            commandID = 0
         }
-        cmd := dev.cmd[req.ID]
-        dev.mutex.Unlock()
+        cmd := command[id]
+        cmdMutex.Unlock()
 
-        js, _ := json.Marshal(req)
-        dev.wsWrite(websocket.TextMessage, js)
+        msg := RttyMessageInit(&rtty.RttyMessage{
+            Version: RTTY_MESSAGE_VERSION,
+            Type: rtty.RttyMessage_COMMAND,
+            Id: id,
+            Name: req.Cmd,
+            Username: req.Username,
+            Password: req.Password,
+            Params: req.Params,
+            Env: req.Env,
+        })
+
+        dev.wsWrite(websocket.BinaryMessage, msg)
 
         select {
-        case wsMsg := <- cmd:
-            res := CommandResult{}
-            json.Unmarshal(wsMsg.data, &res)
+        case msg := <- cmd:
+            res := CommandResult{
+                Stdout: msg.Stdout,
+                Stderr: msg.Stderr,
+            }
 
-            dev.mutex.Lock()
-            delete(dev.cmd, res.ID)
-            dev.mutex.Unlock()
+            cmdMutex.Lock()
+            delete(command, msg.Id)
+            cmdMutex.Unlock()
 
-            res.ID = 0
-            res.Msg = errStr[res.Err]
-            js, _ = json.Marshal(res)
-
+            js, _ := json.Marshal(res)
             w.Write(js)
+
             return
         case <- ticker.C:
             err = COMMAND_ERR_TIMEOUT
